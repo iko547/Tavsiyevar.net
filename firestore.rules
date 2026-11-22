@@ -1,0 +1,159 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isVerified() && request.auth.token.email == 'yorganciyonca@gmail.com';
+    }
+
+    function isValidMediaList(media) {
+      return media is list
+        && media.size() <= 3
+        && (
+          media.size() == 0
+          || (
+            media[0] is map
+            && media[0].keys().hasAll(['id', 'type', 'url', 'name'])
+            && media[0].keys().hasOnly(['id', 'type', 'url', 'name'])
+            && media[0].id is string && media[0].id.size() >= 1 && media[0].id.size() <= 80
+            && media[0].type is string && media[0].type in ['image', 'video']
+            && media[0].url is string && media[0].url.size() >= 1 && media[0].url.size() <= 320000
+            && media[0].name is string && media[0].name.size() >= 1 && media[0].name.size() <= 160
+          )
+        );
+    }
+
+    function isValidRecommendation(data) {
+      return data.keys().hasAll([
+          'product', 'category', 'duration', 'note', 'media',
+          'authorId', 'authorName', 'isPublic',
+          'ratingSum', 'ratingCount', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'product', 'category', 'duration', 'note', 'media',
+          'authorId', 'authorName', 'isPublic',
+          'ratingSum', 'ratingCount', 'createdAt', 'updatedAt'
+        ])
+        && data.product is string && data.product.size() >= 2 && data.product.size() <= 180
+        && data.category is string && data.category in ['Ev Aletleri', 'Ses & Görüntü', 'Bilgisayar & Aksesuar']
+        && data.duration is string && data.duration.size() >= 2 && data.duration.size() <= 60
+        && data.note is string && data.note.size() >= 5 && data.note.size() <= 2000
+        && isValidMediaList(data.media)
+        && data.authorId is string && data.authorId.size() >= 1 && data.authorId.size() <= 128
+        && data.authorName is string && data.authorName.size() >= 1 && data.authorName.size() <= 100
+        && data.isPublic is bool && data.isPublic == true
+        && data.ratingSum is int && data.ratingSum >= 0 && data.ratingSum <= 10000000
+        && data.ratingCount is int && data.ratingCount >= 0 && data.ratingCount <= 2000000
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidVote(data, recId, userId) {
+      return data.keys().hasAll(['userId', 'recId', 'score', 'updatedAt'])
+        && data.keys().hasOnly(['userId', 'recId', 'score', 'updatedAt'])
+        && data.userId is string && data.userId == userId
+        && data.recId is string && data.recId == recId
+        && data.score is int && data.score >= 1 && data.score <= 5
+        && data.updatedAt is timestamp;
+    }
+
+    match /recommendations/{recId} {
+      allow get: if isValidId(recId) && existing().isPublic == true;
+      allow list: if resource.data.isPublic == true;
+
+      allow create: if isVerified()
+        && isValidId(recId)
+        && isValidRecommendation(incoming())
+        && incoming().authorId == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && (
+          (incoming().ratingCount == 1 && incoming().ratingSum >= 1 && incoming().ratingSum <= 5)
+          || (
+            recId in ['rec-1', 'rec-2', 'rec-3', 'rec-4', 'rec-5', 'rec-6', 'rec-7', 'rec-8', 'rec-9', 'rec-10']
+            && incoming().ratingCount >= 1
+            && incoming().ratingCount <= 100
+            && incoming().ratingSum >= incoming().ratingCount
+            && incoming().ratingSum <= incoming().ratingCount * 5
+          )
+        );
+
+      allow update: if isValidId(recId)
+        && isValidRecommendation(incoming())
+        && incoming().createdAt == existing().createdAt
+        && incoming().authorId == existing().authorId
+        && incoming().isPublic == existing().isPublic
+        && incoming().updatedAt == request.time
+        && (
+          (
+            isVerified()
+            && (existing().authorId == request.auth.uid || isAdmin())
+            && incoming().diff(existing()).affectedKeys().hasOnly(['product', 'category', 'duration', 'note', 'media', 'updatedAt'])
+          )
+          || (
+            incoming().diff(existing()).affectedKeys().hasOnly(['ratingSum', 'ratingCount', 'updatedAt'])
+            && (
+              (
+                incoming().ratingCount == existing().ratingCount + 1
+                && incoming().ratingSum >= existing().ratingSum + 1
+                && incoming().ratingSum <= existing().ratingSum + 5
+              )
+              || (
+                incoming().ratingCount == existing().ratingCount
+                && incoming().ratingSum >= existing().ratingSum - 4
+                && incoming().ratingSum <= existing().ratingSum + 4
+              )
+            )
+          )
+        );
+
+      allow delete: if isVerified()
+        && isValidId(recId)
+        && (existing().authorId == request.auth.uid || isAdmin());
+    }
+
+    match /users/{userId}/votes/{recId} {
+      allow get: if isSignedIn() && isOwner(userId) && isValidId(recId);
+      allow list: if isSignedIn() && isOwner(userId);
+
+      allow create, update: if isVerified()
+        && isOwner(userId)
+        && isValidId(userId)
+        && isValidId(recId)
+        && isValidVote(incoming(), recId, userId)
+        && incoming().updatedAt == request.time
+        && exists(/databases/$(database)/documents/recommendations/$(recId))
+        && getAfter(/databases/$(database)/documents/recommendations/$(recId)).data.updatedAt == request.time;
+
+      allow delete: if isVerified() && isOwner(userId) && isValidId(recId);
+    }
+  }
+}

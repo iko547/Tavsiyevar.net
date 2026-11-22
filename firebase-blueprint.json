@@ -1,0 +1,125 @@
+{
+  "entities": {
+    "Recommendation": {
+      "title": "Recommendation",
+      "description": "A verified price/performance product recommendation shared by a user.",
+      "type": "object",
+      "properties": {
+        "product": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 180,
+          "description": "Product brand and model name"
+        },
+        "category": {
+          "type": "string",
+          "enum": ["Ev Aletleri", "Ses & Görüntü", "Bilgisayar & Aksesuar"],
+          "description": "Product category"
+        },
+        "duration": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 60,
+          "description": "Usage duration reported by author"
+        },
+        "note": {
+          "type": "string",
+          "minLength": 5,
+          "maxLength": 2000,
+          "description": "User experience and price/performance review note"
+        },
+        "media": {
+          "type": "array",
+          "description": "Bounded list of up to 3 media preview items"
+        },
+        "authorId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "Firebase Auth UID of the creator"
+        },
+        "authorName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "description": "Public non-PII display name of the creator"
+        },
+        "isPublic": {
+          "type": "boolean",
+          "description": "Visibility flag for public catalog listing"
+        },
+        "ratingSum": {
+          "type": "integer",
+          "description": "Total sum of all 1-5 ratings"
+        },
+        "ratingCount": {
+          "type": "integer",
+          "description": "Total count of ratings"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server last update timestamp"
+        }
+      },
+      "required": [
+        "product",
+        "category",
+        "duration",
+        "note",
+        "media",
+        "authorId",
+        "authorName",
+        "isPublic",
+        "ratingSum",
+        "ratingCount",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "UserVote": {
+      "title": "UserVote",
+      "description": "A user's 1-5 rating for a specific recommendation.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "Voter UID"
+        },
+        "recId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "Target recommendation ID"
+        },
+        "score": {
+          "type": "integer",
+          "description": "Rating value from 1 to 5"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server vote timestamp"
+        }
+      },
+      "required": ["userId", "recId", "score", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/recommendations/{recId}": {
+      "schema": { "$ref": "#/entities/Recommendation" },
+      "description": "Public collection of price/performance product recommendations"
+    },
+    "/users/{userId}/votes/{recId}": {
+      "schema": { "$ref": "#/entities/UserVote" },
+      "description": "Per-user vote records synchronized atomically with recommendation totals"
+    }
+  }
+}

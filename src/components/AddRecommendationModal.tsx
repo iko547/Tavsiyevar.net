@@ -1,0 +1,390 @@
+import { User } from 'firebase/auth';
+import { ChangeEvent, FormEvent, useEffect, useRef, useState } from 'react';
+import { CATEGORIES } from '../data/initialRecommendations';
+import { Category, MediaItem } from '../types/recommendation';
+import { CreateRecommendationInput, fileToMediaItem, MAX_MEDIA_ITEMS } from '../utils/storage';
+import { BrandEmblem } from './BrandEmblem';
+
+interface AddRecommendationModalProps {
+  isOpen: boolean;
+  user: User | null;
+  onSignIn: () => Promise<User | null>;
+  onClose: () => void;
+  onAdd: (input: CreateRecommendationInput) => Promise<void>;
+  onNotify: (message: string) => void;
+}
+
+export function AddRecommendationModal({
+  isOpen,
+  user,
+  onSignIn,
+  onClose,
+  onAdd,
+  onNotify,
+}: AddRecommendationModalProps) {
+  const [product, setProduct] = useState('');
+  const [category, setCategory] = useState<Category>('Ev Aletleri');
+  const [duration, setDuration] = useState('');
+  const [note, setNote] = useState('');
+  const [stagedMedia, setStagedMedia] = useState<MediaItem[]>([]);
+  const [isProcessingMedia, setIsProcessingMedia] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSigningIn, setIsSigningIn] = useState(false);
+
+  const productInputRef = useRef<HTMLInputElement>(null);
+
+  const resetFormState = () => {
+    setProduct('');
+    setCategory('Ev Aletleri');
+    setDuration('');
+    setNote('');
+    setStagedMedia([]);
+  };
+
+  const handleCancel = () => {
+    if (isSubmitting) return;
+    resetFormState();
+    onClose();
+  };
+
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
+    const focusTimer = window.setTimeout(() => {
+      productInputRef.current?.focus();
+    }, 30);
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !isSubmitting) {
+        resetFormState();
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      window.clearTimeout(focusTimer);
+      window.removeEventListener('keydown', handleKeyDown);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [isOpen, isSubmitting, onClose]);
+
+  const handleMediaUpload = async (e: ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    e.target.value = '';
+    if (files.length === 0) return;
+
+    const remainingSlots = MAX_MEDIA_ITEMS - stagedMedia.length;
+    if (remainingSlots <= 0) {
+      onNotify(`En fazla ${MAX_MEDIA_ITEMS} adet medya ekleyebilirsiniz`);
+      return;
+    }
+
+    const selected = files.slice(0, remainingSlots);
+    if (files.length > remainingSlots) {
+      onNotify(`En fazla ${MAX_MEDIA_ITEMS} adet medya yüklenebilir`);
+    }
+
+    setIsProcessingMedia(true);
+    try {
+      const results = await Promise.all(selected.map((file) => fileToMediaItem(file)));
+      const valid: MediaItem[] = [];
+      let firstError: string | undefined;
+
+      results.forEach((res) => {
+        if (res.item) {
+          valid.push(res.item);
+        } else if (!firstError && res.error) {
+          firstError = res.error;
+        }
+      });
+
+      if (valid.length > 0) {
+        setStagedMedia((prev) => [...prev, ...valid].slice(0, MAX_MEDIA_ITEMS));
+      }
+      if (firstError) {
+        onNotify(firstError);
+      }
+    } finally {
+      setIsProcessingMedia(false);
+    }
+  };
+
+  const handleRemoveStagedMedia = (mediaId: string) => {
+    setStagedMedia((prev) => prev.filter((m) => m.id !== mediaId));
+  };
+
+  const handleSignInClick = async () => {
+    setIsSigningIn(true);
+    try {
+      await onSignIn();
+    } finally {
+      setIsSigningIn(false);
+    }
+  };
+
+  const handleSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (isSubmitting) return;
+
+    const trimmedProduct = product.trim();
+    const trimmedDuration = duration.trim();
+    const trimmedNote = note.trim();
+
+    if (trimmedProduct.length < 2 || trimmedDuration.length < 2 || trimmedNote.length < 5) {
+      onNotify('Lütfen ürün adı, süre ve en az 5 karakter deneyim notu girin');
+      return;
+    }
+
+    let activeUser = user;
+    if (!activeUser) {
+      setIsSigningIn(true);
+      try {
+        activeUser = await onSignIn();
+      } finally {
+        setIsSigningIn(false);
+      }
+      if (!activeUser) return;
+    }
+
+    const durationText = trimmedDuration.toLocaleLowerCase('tr-TR').includes('kullanım')
+      ? trimmedDuration
+      : `${trimmedDuration} kullanımda`;
+
+    setIsSubmitting(true);
+    try {
+      await onAdd({
+        product: trimmedProduct,
+        category,
+        duration: durationText,
+        note: trimmedNote,
+        media: [...stagedMedia],
+      });
+      resetFormState();
+      onClose();
+    } catch {
+      onNotify('Tavsiye kaydedilirken bir hata oluştu, lütfen tekrar deneyin');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/55 p-4 backdrop-blur-xs"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="modalHeading"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) {
+          handleCancel();
+        }
+      }}
+    >
+      <div className="max-h-[90vh] w-full max-w-[540px] overflow-y-auto rounded-[18px] border border-slate-200 bg-white shadow-[0_20px_35px_-10px_rgba(15,23,42,0.2)]">
+        <div className="sticky top-0 z-[5] flex items-center justify-between border-b border-slate-200 bg-white px-5 py-4">
+          <div className="flex items-center gap-2.5">
+            <BrandEmblem lit size={23} />
+            <h2 id="modalHeading" className="text-[17px] font-bold text-slate-900">
+              + Yeni Tavsiye Ekle
+            </h2>
+          </div>
+          <button
+            type="button"
+            onClick={handleCancel}
+            disabled={isSubmitting}
+            aria-label="Kapat"
+            className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-[9px] border border-slate-200 bg-slate-50 text-lg leading-none text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900 disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600"
+          >
+            &times;
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="flex flex-col gap-[15px] p-5">
+          {!user && (
+            <div className="flex flex-wrap items-center justify-between gap-2.5 rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5">
+              <p className="text-xs font-medium text-amber-900">
+                Tavsiyenin canlı veritabanına kaydedilmesi için Google ile giriş yapmalısın.
+              </p>
+              <button
+                type="button"
+                disabled={isSigningIn}
+                onClick={handleSignInClick}
+                className="shrink-0 cursor-pointer whitespace-nowrap rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-bold text-white transition-colors hover:bg-slate-800 disabled:opacity-60"
+              >
+                {isSigningIn ? 'Giriş yapılıyor...' : 'Google ile Giriş Yap'}
+              </button>
+            </div>
+          )}
+
+          <div>
+            <label htmlFor="inputProduct" className="mb-1.5 block text-[12.5px] font-semibold text-slate-900">
+              Ürün &amp; Marka / Model *
+            </label>
+            <input
+              ref={productInputRef}
+              type="text"
+              id="inputProduct"
+              value={product}
+              onChange={(e) => setProduct(e.target.value)}
+              minLength={2}
+              maxLength={180}
+              required
+              placeholder="Örn: Vestel Lodos H6000 K Torbasız Elektrikli Süpürge"
+              className="w-full rounded-[11px] border border-slate-200 bg-slate-50 px-3 py-2.5 text-[13.5px] text-slate-900 outline-none transition-colors focus:border-emerald-600 focus:bg-white"
+            />
+          </div>
+
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div>
+              <label htmlFor="inputCategory" className="mb-1.5 block text-[12.5px] font-semibold text-slate-900">
+                Kategori *
+              </label>
+              <select
+                id="inputCategory"
+                value={category}
+                onChange={(e) => setCategory(e.target.value as Category)}
+                className="w-full rounded-[11px] border border-slate-200 bg-slate-50 px-3 py-2.5 text-[13.5px] text-slate-900 outline-none transition-colors focus:border-emerald-600 focus:bg-white"
+              >
+                {CATEGORIES.map((cat) => (
+                  <option key={cat} value={cat}>
+                    {cat}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label htmlFor="inputDuration" className="mb-1.5 block text-[12.5px] font-semibold text-slate-900">
+                Kullanım Süresi *
+              </label>
+              <input
+                type="text"
+                id="inputDuration"
+                value={duration}
+                onChange={(e) => setDuration(e.target.value)}
+                minLength={2}
+                maxLength={60}
+                required
+                placeholder="Örn: 6 ay"
+                className="w-full rounded-[11px] border border-slate-200 bg-slate-50 px-3 py-2.5 text-[13.5px] text-slate-900 outline-none transition-colors focus:border-emerald-600 focus:bg-white"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label htmlFor="inputNote" className="mb-1.5 block text-[12.5px] font-semibold text-slate-900">
+              Tavsiye Notu / Deneyiminiz *
+            </label>
+            <textarea
+              id="inputNote"
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              minLength={5}
+              maxLength={2000}
+              required
+              placeholder="Ürünün günlük kullanımdaki gerçek performansını ve fiyat/performans deneyimini paylaş..."
+              className="min-h-[92px] w-full resize-y rounded-[11px] border border-slate-200 bg-slate-50 px-3 py-2.5 text-[13.5px] text-slate-900 outline-none transition-colors focus:border-emerald-600 focus:bg-white"
+            />
+          </div>
+
+          <div>
+            <span className="mb-1.5 block text-[12.5px] font-semibold text-slate-900">
+              Fotoğraf veya Video Ekle (En fazla {MAX_MEDIA_ITEMS} dosya, isteğe bağlı)
+            </span>
+            <label
+              htmlFor="inputMedia"
+              className="flex cursor-pointer flex-col items-center justify-center gap-1.5 rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 p-4 text-center transition-colors hover:border-emerald-600 hover:bg-emerald-50"
+            >
+              <span
+                className="flex h-9 w-9 items-center justify-center rounded-[10px] border border-slate-200 bg-white text-emerald-600"
+                aria-hidden="true"
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <rect x="3" y="3" width="18" height="18" rx="3" />
+                  <circle cx="8.5" cy="8.5" r="1.5" />
+                  <polyline points="21 15 16 10 5 21" />
+                </svg>
+              </span>
+              <span className="text-[13px] font-semibold text-slate-900">
+                {isProcessingMedia ? 'Medya hazırlanıyor...' : 'Fotoğraf veya Video Seç'}
+              </span>
+              <span className="text-[11.5px] text-slate-500">
+                Fotoğraflar otomatik optimize edilerek veritabanına kalıcı kaydedilir
+              </span>
+            </label>
+            <input
+              type="file"
+              id="inputMedia"
+              accept="image/*,video/*"
+              multiple
+              onChange={handleMediaUpload}
+              className="hidden"
+            />
+
+            {stagedMedia.length > 0 && (
+              <div className="mt-2.5 grid grid-cols-3 gap-2">
+                {stagedMedia.map((media) => (
+                  <div
+                    key={media.id}
+                    className="relative overflow-hidden rounded-[10px] border border-slate-200 bg-white"
+                  >
+                    {media.type === 'video' ? (
+                      <video
+                        src={media.url}
+                        muted
+                        playsInline
+                        className="block h-20 w-full bg-slate-900 object-cover"
+                      />
+                    ) : (
+                      <img
+                        src={media.url}
+                        alt={media.name}
+                        referrerPolicy="no-referrer"
+                        className="block h-20 w-full bg-slate-900 object-cover"
+                      />
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveStagedMedia(media.id)}
+                      aria-label={`${media.name} medyasını kaldır`}
+                      className="absolute top-1 right-1 flex h-[22px] w-[22px] cursor-pointer items-center justify-center rounded-full bg-slate-900/85 text-[13px] font-bold text-white transition-colors hover:bg-red-600"
+                    >
+                      &times;
+                    </button>
+                    <div className="truncate border-t border-slate-200 px-1.5 py-1 text-[10.5px] text-slate-600">
+                      {media.name}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="flex items-center justify-end gap-2 border-t border-slate-200 pt-3">
+            <button
+              type="button"
+              disabled={isSubmitting}
+              onClick={handleCancel}
+              className="inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-[11px] border border-slate-200 bg-white px-3.5 py-[9px] text-[13px] font-semibold text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900 disabled:opacity-50"
+            >
+              Vazgeç
+            </button>
+            <button
+              type="submit"
+              disabled={isProcessingMedia || isSubmitting || isSigningIn}
+              className="inline-flex cursor-pointer items-center justify-center gap-1.5 whitespace-nowrap rounded-[11px] bg-emerald-600 px-4 py-2.5 text-[13.5px] font-bold text-white shadow-xs transition-all hover:bg-emerald-700 active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {isSubmitting ? 'Yayınlanıyor...' : 'Tavsiyeyi Yayınla'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}

@@ -1,0 +1,6 @@
+{
+  "name": "tavsiyevar.net",
+  "description": "Gerçek kullanıcı deneyimlerine dayalı, doğrulanmış fiyat/performans tavsiye platformu.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
