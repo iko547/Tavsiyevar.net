@@ -13,8 +13,24 @@
         },
         "category": {
           "type": "string",
-          "enum": ["Ev Aletleri", "Ses & Görüntü", "Bilgisayar & Aksesuar"],
-          "description": "Product category"
+          "enum": [
+            "Yemek & Mekan",
+            "Ev Aletleri",
+            "Ses & Görüntü",
+            "Bilgisayar & Aksesuar",
+            "Temizlik & Ev Bakım",
+            "Kişisel Bakım & Kozmetik",
+            "Mutfak & Gıda",
+            "Oto & Aksesuar",
+            "Anne & Bebek"
+          ],
+          "description": "Product or venue category"
+        },
+        "location": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 100,
+          "description": "City or district for venue recommendations"
         },
         "duration": {
           "type": "string",

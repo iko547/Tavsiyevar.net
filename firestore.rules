@@ -58,12 +58,23 @@ service cloud.firestore {
           'ratingSum', 'ratingCount', 'createdAt', 'updatedAt'
         ])
         && data.keys().hasOnly([
-          'product', 'category', 'duration', 'note', 'media',
+          'product', 'category', 'location', 'duration', 'note', 'media',
           'authorId', 'authorName', 'isPublic',
           'ratingSum', 'ratingCount', 'createdAt', 'updatedAt'
         ])
         && data.product is string && data.product.size() >= 2 && data.product.size() <= 180
-        && data.category is string && data.category in ['Ev Aletleri', 'Ses & Görüntü', 'Bilgisayar & Aksesuar']
+        && data.category is string && data.category in [
+          'Yemek & Mekan',
+          'Ev Aletleri',
+          'Ses & Görüntü',
+          'Bilgisayar & Aksesuar',
+          'Temizlik & Ev Bakım',
+          'Kişisel Bakım & Kozmetik',
+          'Mutfak & Gıda',
+          'Oto & Aksesuar',
+          'Anne & Bebek'
+        ]
+        && (!('location' in data) || (data.location is string && data.location.size() >= 2 && data.location.size() <= 100))
         && data.duration is string && data.duration.size() >= 2 && data.duration.size() <= 60
         && data.note is string && data.note.size() >= 5 && data.note.size() <= 2000
         && isValidMediaList(data.media)
@@ -116,7 +127,7 @@ service cloud.firestore {
           (
             isVerified()
             && (existing().authorId == request.auth.uid || isAdmin())
-            && incoming().diff(existing()).affectedKeys().hasOnly(['product', 'category', 'duration', 'note', 'media', 'updatedAt'])
+            && incoming().diff(existing()).affectedKeys().hasOnly(['product', 'category', 'location', 'duration', 'note', 'media', 'updatedAt'])
           )
           || (
             incoming().diff(existing()).affectedKeys().hasOnly(['ratingSum', 'ratingCount', 'updatedAt'])

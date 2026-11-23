@@ -24,6 +24,7 @@ export function AddRecommendationModal({
 }: AddRecommendationModalProps) {
   const [product, setProduct] = useState('');
   const [category, setCategory] = useState<Category>('Ev Aletleri');
+  const [location, setLocation] = useState('');
   const [duration, setDuration] = useState('');
   const [note, setNote] = useState('');
   const [stagedMedia, setStagedMedia] = useState<MediaItem[]>([]);
@@ -31,11 +32,12 @@ export function AddRecommendationModal({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSigningIn, setIsSigningIn] = useState(false);
 
-  const productInputRef = useRef<HTMLInputElement>(null);
+  const categorySelectRef = useRef<HTMLSelectElement>(null);
 
   const resetFormState = () => {
     setProduct('');
     setCategory('Ev Aletleri');
+    setLocation('');
     setDuration('');
     setNote('');
     setStagedMedia([]);
@@ -54,7 +56,7 @@ export function AddRecommendationModal({
     document.body.style.overflow = 'hidden';
 
     const focusTimer = window.setTimeout(() => {
-      productInputRef.current?.focus();
+      categorySelectRef.current?.focus();
     }, 30);
 
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -131,11 +133,18 @@ export function AddRecommendationModal({
     if (isSubmitting) return;
 
     const trimmedProduct = product.trim();
+    const trimmedLocation = location.trim();
     const trimmedDuration = duration.trim();
     const trimmedNote = note.trim();
+    const isVenue = category === 'Yemek & Mekan';
 
     if (trimmedProduct.length < 2 || trimmedDuration.length < 2 || trimmedNote.length < 5) {
-      onNotify('Lütfen ürün adı, süre ve en az 5 karakter deneyim notu girin');
+      onNotify('Lütfen isim, süre ve en az 5 karakter deneyim notu girin');
+      return;
+    }
+
+    if (isVenue && trimmedLocation.length < 2) {
+      onNotify('Lütfen mekanın bulunduğu ili girin');
       return;
     }
 
@@ -150,15 +159,17 @@ export function AddRecommendationModal({
       if (!activeUser) return;
     }
 
-    const durationText = trimmedDuration.toLocaleLowerCase('tr-TR').includes('kullanım')
-      ? trimmedDuration
-      : `${trimmedDuration} kullanımda`;
+    const durationText =
+      isVenue || trimmedDuration.toLocaleLowerCase('tr-TR').includes('kullanım')
+        ? trimmedDuration
+        : `${trimmedDuration} kullanımda`;
 
     setIsSubmitting(true);
     try {
       await onAdd({
         product: trimmedProduct,
         category,
+        location: isVenue ? trimmedLocation : undefined,
         duration: durationText,
         note: trimmedNote,
         media: [...stagedMedia],
@@ -223,11 +234,29 @@ export function AddRecommendationModal({
           )}
 
           <div>
+            <label htmlFor="inputCategory" className="mb-1.5 block text-[12.5px] font-semibold text-slate-900">
+              Kategori *
+            </label>
+            <select
+              ref={categorySelectRef}
+              id="inputCategory"
+              value={category}
+              onChange={(e) => setCategory(e.target.value as Category)}
+              className="w-full rounded-[11px] border border-slate-200 bg-slate-50 px-3 py-2.5 text-[13.5px] text-slate-900 outline-none transition-colors focus:border-emerald-600 focus:bg-white"
+            >
+              {CATEGORIES.map((cat) => (
+                <option key={cat} value={cat}>
+                  {cat}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
             <label htmlFor="inputProduct" className="mb-1.5 block text-[12.5px] font-semibold text-slate-900">
-              Ürün &amp; Marka / Model *
+              {category === 'Yemek & Mekan' ? 'Mekan / Restoran Adı *' : 'Ürün & Marka / Model *'}
             </label>
             <input
-              ref={productInputRef}
               type="text"
               id="inputProduct"
               value={product}
@@ -235,33 +264,38 @@ export function AddRecommendationModal({
               minLength={2}
               maxLength={180}
               required
-              placeholder="Örn: Vestel Lodos H6000 K Torbasız Elektrikli Süpürge"
+              placeholder={
+                category === 'Yemek & Mekan'
+                  ? 'Örn: Beyzade Kebap Salonu'
+                  : 'Örn: Vestel Lodos H6000 K Torbasız Elektrikli Süpürge'
+              }
               className="w-full rounded-[11px] border border-slate-200 bg-slate-50 px-3 py-2.5 text-[13.5px] text-slate-900 outline-none transition-colors focus:border-emerald-600 focus:bg-white"
             />
           </div>
 
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <div>
-              <label htmlFor="inputCategory" className="mb-1.5 block text-[12.5px] font-semibold text-slate-900">
-                Kategori *
-              </label>
-              <select
-                id="inputCategory"
-                value={category}
-                onChange={(e) => setCategory(e.target.value as Category)}
-                className="w-full rounded-[11px] border border-slate-200 bg-slate-50 px-3 py-2.5 text-[13.5px] text-slate-900 outline-none transition-colors focus:border-emerald-600 focus:bg-white"
-              >
-                {CATEGORIES.map((cat) => (
-                  <option key={cat} value={cat}>
-                    {cat}
-                  </option>
-                ))}
-              </select>
-            </div>
+          <div className={category === 'Yemek & Mekan' ? 'grid grid-cols-1 gap-3 sm:grid-cols-2' : ''}>
+            {category === 'Yemek & Mekan' && (
+              <div>
+                <label htmlFor="inputLocation" className="mb-1.5 block text-[12.5px] font-semibold text-slate-900">
+                  İl (Şehir) *
+                </label>
+                <input
+                  type="text"
+                  id="inputLocation"
+                  value={location}
+                  onChange={(e) => setLocation(e.target.value)}
+                  minLength={2}
+                  maxLength={100}
+                  required
+                  placeholder="Örn: Adana"
+                  className="w-full rounded-[11px] border border-slate-200 bg-slate-50 px-3 py-2.5 text-[13.5px] text-slate-900 outline-none transition-colors focus:border-emerald-600 focus:bg-white"
+                />
+              </div>
+            )}
 
             <div>
               <label htmlFor="inputDuration" className="mb-1.5 block text-[12.5px] font-semibold text-slate-900">
-                Kullanım Süresi *
+                {category === 'Yemek & Mekan' ? 'Ziyaret Sıklığı / Süresi *' : 'Kullanım Süresi *'}
               </label>
               <input
                 type="text"
@@ -271,7 +305,7 @@ export function AddRecommendationModal({
                 minLength={2}
                 maxLength={60}
                 required
-                placeholder="Örn: 6 ay"
+                placeholder={category === 'Yemek & Mekan' ? 'Örn: 2 yıldır müdavimiyim' : 'Örn: 6 ay'}
                 className="w-full rounded-[11px] border border-slate-200 bg-slate-50 px-3 py-2.5 text-[13.5px] text-slate-900 outline-none transition-colors focus:border-emerald-600 focus:bg-white"
               />
             </div>
@@ -288,7 +322,11 @@ export function AddRecommendationModal({
               minLength={5}
               maxLength={2000}
               required
-              placeholder="Ürünün günlük kullanımdaki gerçek performansını ve fiyat/performans deneyimini paylaş..."
+              placeholder={
+                category === 'Yemek & Mekan'
+                  ? 'Lezzet, porsiyon, hijyen ve fiyat/performans deneyimini paylaş...'
+                  : 'Ürünün günlük kullanımdaki gerçek performansını ve fiyat/performans deneyimini paylaş...'
+              }
               className="min-h-[92px] w-full resize-y rounded-[11px] border border-slate-200 bg-slate-50 px-3 py-2.5 text-[13.5px] text-slate-900 outline-none transition-colors focus:border-emerald-600 focus:bg-white"
             />
           </div>

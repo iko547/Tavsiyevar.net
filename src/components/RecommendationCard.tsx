@@ -108,10 +108,36 @@ export function RecommendationCard({
             <h2 className="text-base leading-[1.35] font-bold tracking-[-0.01em] text-slate-900">
               {item.product}
             </h2>
-            {item.authorName && item.authorName !== 'tavsiyevar.net' && (
-              <p className="mt-0.5 text-[11.5px] font-medium text-slate-500">
-                Paylaşan: {item.authorName}
-              </p>
+            {(item.location || (item.authorName && item.authorName !== 'tavsiyevar.net')) && (
+              <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                {item.location && (
+                  <span
+                    className="inline-flex items-center gap-1.5 rounded-[8px] border border-amber-200 bg-amber-50 px-2.5 py-[3px] text-[12px] font-bold text-amber-900"
+                    title={`Konum: ${item.location}`}
+                  >
+                    <svg
+                      width="13"
+                      height="13"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      aria-hidden="true"
+                      className="shrink-0"
+                    >
+                      <path
+                        d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7Z"
+                        fill="#d97706"
+                      />
+                      <circle cx="12" cy="9" r="2.75" fill="#fffbeb" />
+                    </svg>
+                    <span>{item.location}</span>
+                  </span>
+                )}
+                {item.authorName && item.authorName !== 'tavsiyevar.net' && (
+                  <span className="text-[11.5px] font-medium text-slate-500">
+                    Paylaşan: {item.authorName}
+                  </span>
+                )}
+              </div>
             )}
           </div>
         </div>

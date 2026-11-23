@@ -1,4 +1,13 @@
-export type Category = 'Ev Aletleri' | 'Ses & Görüntü' | 'Bilgisayar & Aksesuar';
+export type Category =
+  | 'Yemek & Mekan'
+  | 'Ev Aletleri'
+  | 'Ses & Görüntü'
+  | 'Bilgisayar & Aksesuar'
+  | 'Temizlik & Ev Bakım'
+  | 'Kişisel Bakım & Kozmetik'
+  | 'Mutfak & Gıda'
+  | 'Oto & Aksesuar'
+  | 'Anne & Bebek';
 
 export type CategoryFilter = 'Tümü' | Category;
 
@@ -13,6 +22,7 @@ export interface Recommendation {
   id: string;
   product: string;
   category: Category;
+  location?: string;
   duration: string;
   note: string;
   media: MediaItem[];

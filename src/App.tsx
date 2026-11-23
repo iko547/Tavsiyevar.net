@@ -33,6 +33,8 @@ export default function App() {
   const [votingIds, setVotingIds] = useState<Record<string, boolean>>({});
   const [selectedCategory, setSelectedCategory] = useState<CategoryFilter>('Tümü');
   const [searchTerm, setSearchTerm] = useState('');
+  const [isSearchDropdownOpen, setIsSearchDropdownOpen] = useState(false);
+  const [activeSuggestionIndex, setActiveSuggestionIndex] = useState(-1);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isSigningIn, setIsSigningIn] = useState(false);
   const [lightboxState, setLightboxState] = useState<{
@@ -43,6 +45,8 @@ export default function App() {
 
   const toastTimerRef = useRef<number | null>(null);
   const seededOnceRef = useRef(false);
+  const searchContainerRef = useRef<HTMLDivElement | null>(null);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
 
   const showToast = useCallback((message: string) => {
     setToastMessage(message);
@@ -60,6 +64,20 @@ export default function App() {
         window.clearTimeout(toastTimerRef.current);
       }
     };
+  }, []);
+
+  useEffect(() => {
+    const handlePointerDownOutside = (event: PointerEvent) => {
+      if (
+        searchContainerRef.current &&
+        !searchContainerRef.current.contains(event.target as Node)
+      ) {
+        setIsSearchDropdownOpen(false);
+        setActiveSuggestionIndex(-1);
+      }
+    };
+    document.addEventListener('pointerdown', handlePointerDownOutside);
+    return () => document.removeEventListener('pointerdown', handlePointerDownOutside);
   }, []);
 
   useEffect(() => {
@@ -123,6 +141,116 @@ export default function App() {
     }));
   }, [firestoreItems, userVotes, guestVotes]);
 
+  const brandDirectory = useMemo(() => {
+    const map = new Map<string, { brand: string; normalized: string; count: number }>();
+    recommendations.forEach((item) => {
+      const firstToken = item.product.trim().split(/\s+/)[0] || '';
+      const cleanBrand = firstToken.replace(/^[,.;:!?()]+|[,.;:!?()]+$/g, '');
+      if (cleanBrand.length < 2) return;
+      const key = normalizeTurkish(cleanBrand);
+      const existing = map.get(key);
+      if (existing) {
+        existing.count += 1;
+      } else {
+        map.set(key, { brand: cleanBrand, normalized: key, count: 1 });
+      }
+    });
+    return Array.from(map.values()).sort((a, b) =>
+      a.brand.localeCompare(b.brand, 'tr-TR'),
+    );
+  }, [recommendations]);
+
+  const locationDirectory = useMemo(() => {
+    const map = new Map<string, { location: string; normalized: string; count: number }>();
+    recommendations.forEach((item) => {
+      if (!item.location) return;
+      const cleanLoc = item.location.trim();
+      if (cleanLoc.length < 2) return;
+      const key = normalizeTurkish(cleanLoc);
+      const existing = map.get(key);
+      if (existing) {
+        existing.count += 1;
+      } else {
+        map.set(key, { location: cleanLoc, normalized: key, count: 1 });
+      }
+    });
+    return Array.from(map.values()).sort((a, b) =>
+      a.location.localeCompare(b.location, 'tr-TR'),
+    );
+  }, [recommendations]);
+
+  const searchSuggestions = useMemo(() => {
+    const query = normalizeTurkish(searchTerm);
+
+    const matchingBrands = query
+      ? [
+          ...brandDirectory.filter((b) => b.normalized.startsWith(query)),
+          ...brandDirectory.filter(
+            (b) => !b.normalized.startsWith(query) && b.normalized.includes(query),
+          ),
+        ]
+      : brandDirectory;
+
+    const matchingLocations = query
+      ? [
+          ...locationDirectory.filter((l) => l.normalized.startsWith(query)),
+          ...locationDirectory.filter(
+            (l) => !l.normalized.startsWith(query) && l.normalized.includes(query),
+          ),
+        ].slice(0, 6)
+      : locationDirectory.slice(0, 6);
+
+    const matchingProducts = query
+      ? recommendations
+          .filter(
+            (item) =>
+              normalizeTurkish(item.product).includes(query) ||
+              normalizeTurkish(item.category).includes(query) ||
+              normalizeTurkish(item.location || '').includes(query),
+          )
+          .slice(0, 6)
+      : [];
+
+    return {
+      brands: query ? matchingBrands.slice(0, 12) : matchingBrands,
+      locations: matchingLocations,
+      products: matchingProducts,
+    };
+  }, [brandDirectory, locationDirectory, recommendations, searchTerm]);
+
+  const flatSuggestions = useMemo(() => {
+    const list: Array<
+      | { kind: 'brand'; value: string; label: string; meta: string }
+      | { kind: 'location'; value: string; label: string; meta: string }
+      | { kind: 'product'; value: string; label: string; meta: string }
+    > = [];
+    searchSuggestions.brands.forEach((b) => {
+      list.push({
+        kind: 'brand',
+        value: b.brand,
+        label: b.brand,
+        meta: `${b.count} kayıt`,
+      });
+    });
+    searchSuggestions.locations.forEach((l) => {
+      list.push({
+        kind: 'location',
+        value: l.location,
+        label: l.location,
+        meta: `${l.count} mekan`,
+      });
+    });
+    searchSuggestions.products.forEach((item) => {
+      list.push({
+        kind: 'product',
+        value: item.product,
+        label: item.product,
+        meta: item.location ? `${item.category} · ${item.location}` : item.category,
+      });
+    });
+    return list;
+  }, [searchSuggestions]);
+
   const filteredRecommendations = useMemo(() => {
     const query = normalizeTurkish(searchTerm);
     return recommendations.filter((item) => {
@@ -131,11 +259,19 @@ export default function App() {
       if (!query) return true;
       return (
         normalizeTurkish(item.product).includes(query) ||
+        normalizeTurkish(item.location || '').includes(query) ||
         normalizeTurkish(item.note).includes(query) ||
         normalizeTurkish(item.category).includes(query)
       );
     });
   }, [recommendations, selectedCategory, searchTerm]);
+
+  const handleSelectSuggestion = useCallback((value: string) => {
+    setSearchTerm(value);
+    setSelectedCategory('Tümü');
+    setIsSearchDropdownOpen(false);
+    setActiveSuggestionIndex(-1);
+  }, []);
 
   const handleSignIn = useCallback(async (): Promise<User | null> => {
     setIsSigningIn(true);
@@ -167,6 +303,8 @@ export default function App() {
     if (e) e.preventDefault();
     setSelectedCategory('Tümü');
     setSearchTerm('');
+    setIsSearchDropdownOpen(false);
+    setActiveSuggestionIndex(-1);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -307,10 +445,235 @@ export default function App() {
 
         {/* Kategori Filtreleri ve Arama */}
         <section
-          className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-[13px] shadow-[0_1px_2px_rgba(15,23,42,0.04),0_1px_3px_rgba(15,23,42,0.06)]"
+          className="mb-5 flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3.5 shadow-[0_1px_2px_rgba(15,23,42,0.04),0_1px_3px_rgba(15,23,42,0.06)]"
           aria-label="Kategori ve arama filtreleri"
         >
-          <div className="no-scrollbar flex items-center gap-2 overflow-x-auto">
+          <div className="flex flex-wrap items-center justify-between gap-2.5">
+            <div ref={searchContainerRef} className="relative w-full md:max-w-[440px]">
+              <svg
+                width="15"
+                height="15"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.2"
+                aria-hidden="true"
+                className="pointer-events-none absolute top-1/2 left-[11px] -translate-y-1/2 text-slate-500"
+              >
+                <circle cx="11" cy="11" r="8" />
+                <line x1="21" y1="21" x2="16.65" y2="16.65" />
+              </svg>
+              <input
+                ref={searchInputRef}
+                type="text"
+                inputMode="search"
+                role="combobox"
+                aria-expanded={
+                  isSearchDropdownOpen && flatSuggestions.length > 0
+                }
+                aria-autocomplete="list"
+                aria-controls="brand-search-listbox"
+                aria-activedescendant={
+                  activeSuggestionIndex >= 0
+                    ? `search-option-${activeSuggestionIndex}`
+                    : undefined
+                }
+                value={searchTerm}
+                onFocus={() => setIsSearchDropdownOpen(true)}
+                onChange={(e) => {
+                  setSearchTerm(e.target.value);
+                  setIsSearchDropdownOpen(true);
+                  setActiveSuggestionIndex(-1);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') {
+                    setIsSearchDropdownOpen(false);
+                    setActiveSuggestionIndex(-1);
+                  } else if (e.key === 'ArrowDown' && flatSuggestions.length > 0) {
+                    e.preventDefault();
+                    setIsSearchDropdownOpen(true);
+                    setActiveSuggestionIndex((prev) =>
+                      prev < flatSuggestions.length - 1 ? prev + 1 : 0,
+                    );
+                  } else if (e.key === 'ArrowUp' && flatSuggestions.length > 0) {
+                    e.preventDefault();
+                    setIsSearchDropdownOpen(true);
+                    setActiveSuggestionIndex((prev) =>
+                      prev > 0 ? prev - 1 : flatSuggestions.length - 1,
+                    );
+                  } else if (
+                    e.key === 'Enter' &&
+                    isSearchDropdownOpen &&
+                    activeSuggestionIndex >= 0 &&
+                    flatSuggestions[activeSuggestionIndex]
+                  ) {
+                    e.preventDefault();
+                    handleSelectSuggestion(flatSuggestions[activeSuggestionIndex].value);
+                  }
+                }}
+                placeholder="Marka, mekan, şehir veya deneyim ara..."
+                aria-label="Marka, mekan, şehir veya deneyim ara"
+                className="w-full rounded-[10px] border border-slate-200 bg-slate-50 py-[9px] pr-9 pl-[34px] text-[13.5px] text-slate-900 outline-none transition-colors focus:border-emerald-600 focus:bg-white"
+              />
+              {searchTerm.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearchTerm('');
+                    setActiveSuggestionIndex(-1);
+                    setIsSearchDropdownOpen(true);
+                    searchInputRef.current?.focus();
+                  }}
+                  aria-label="Aramayı temizle"
+                  className="absolute top-1/2 right-2 flex h-6 w-6 -translate-y-1/2 cursor-pointer items-center justify-center rounded-md text-base leading-none text-slate-500 transition-colors hover:bg-slate-200/70 hover:text-slate-900"
+                >
+                  &times;
+                </button>
+              )}
+
+              {isSearchDropdownOpen && flatSuggestions.length > 0 && (
+                <div
+                  id="brand-search-listbox"
+                  role="listbox"
+                  aria-label="Marka, şehir ve ürün önerileri"
+                  className="absolute top-full right-0 left-0 z-30 mt-1.5 max-h-[290px] overflow-y-auto rounded-xl border border-slate-200 bg-white py-1.5 shadow-[0_14px_30px_-8px_rgba(15,23,42,0.16)]"
+                >
+                  {searchSuggestions.brands.length > 0 && (
+                    <div>
+                      <div className="px-3 pt-1.5 pb-1 text-[11px] font-bold tracking-wide text-slate-500">
+                        {searchTerm.trim() ? 'Marka & Mekanlar' : 'Tüm Marka & Mekanlar'}
+                      </div>
+                      {searchSuggestions.brands.map((brandItem, idx) => {
+                        const isActiveOption = activeSuggestionIndex === idx;
+                        return (
+                          <button
+                            key={brandItem.normalized}
+                            id={`search-option-${idx}`}
+                            type="button"
+                            role="option"
+                            aria-selected={isActiveOption}
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={() => handleSelectSuggestion(brandItem.brand)}
+                            className={`flex w-full cursor-pointer items-center justify-between gap-2 px-3 py-2 text-left text-[13px] transition-colors ${
+                              isActiveOption
+                                ? 'bg-emerald-50 text-emerald-900'
+                                : 'text-slate-800 hover:bg-slate-50'
+                            }`}
+                          >
+                            <span className="font-semibold">{brandItem.brand}</span>
+                            <span className="shrink-0 text-xs font-medium text-slate-500 tabular-nums">
+                              {brandItem.count} kayıt
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {searchSuggestions.locations.length > 0 && (
+                    <div
+                      className={
+                        searchSuggestions.brands.length > 0
+                          ? 'mt-1 border-t border-slate-100 pt-1'
+                          : ''
+                      }
+                    >
+                      <div className="px-3 pt-1.5 pb-1 text-[11px] font-bold tracking-wide text-slate-500">
+                        Şehir / Konumlar
+                      </div>
+                      {searchSuggestions.locations.map((locItem, locIdx) => {
+                        const optionIdx = searchSuggestions.brands.length + locIdx;
+                        const isActiveOption = activeSuggestionIndex === optionIdx;
+                        return (
+                          <button
+                            key={locItem.normalized}
+                            id={`search-option-${optionIdx}`}
+                            type="button"
+                            role="option"
+                            aria-selected={isActiveOption}
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={() => handleSelectSuggestion(locItem.location)}
+                            className={`flex w-full cursor-pointer items-center justify-between gap-2 px-3 py-2 text-left text-[13px] transition-colors ${
+                              isActiveOption
+                                ? 'bg-emerald-50 text-emerald-900'
+                                : 'text-slate-800 hover:bg-slate-50'
+                            }`}
+                          >
+                            <span className="font-semibold">{locItem.location}</span>
+                            <span className="shrink-0 text-xs font-medium text-slate-500 tabular-nums">
+                              {locItem.count} mekan
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {searchSuggestions.products.length > 0 && (
+                    <div
+                      className={
+                        searchSuggestions.brands.length > 0 ||
+                        searchSuggestions.locations.length > 0
+                          ? 'mt-1 border-t border-slate-100 pt-1'
+                          : ''
+                      }
+                    >
+                      <div className="px-3 pt-1.5 pb-1 text-[11px] font-bold tracking-wide text-slate-500">
+                        Ürün &amp; Mekanlar
+                      </div>
+                      {searchSuggestions.products.map((item, prodIdx) => {
+                        const optionIdx =
+                          searchSuggestions.brands.length +
+                          searchSuggestions.locations.length +
+                          prodIdx;
+                        const isActiveOption = activeSuggestionIndex === optionIdx;
+                        return (
+                          <button
+                            key={item.id}
+                            id={`search-option-${optionIdx}`}
+                            type="button"
+                            role="option"
+                            aria-selected={isActiveOption}
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={() => handleSelectSuggestion(item.product)}
+                            className={`flex w-full cursor-pointer flex-col gap-0.5 px-3 py-2 text-left transition-colors ${
+                              isActiveOption
+                                ? 'bg-emerald-50 text-emerald-900'
+                                : 'text-slate-800 hover:bg-slate-50'
+                            }`}
+                          >
+                            <span className="truncate text-[13px] font-semibold">
+                              {item.product}
+                            </span>
+                            <span className="text-[11px] font-medium text-slate-500">
+                              {item.location
+                                ? `${item.category} · ${item.location}`
+                                : item.category}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center gap-3 text-xs font-semibold text-slate-500 tabular-nums">
+              <span>{filteredRecommendations.length} tavsiye</span>
+              {(selectedCategory !== 'Tümü' || searchTerm.trim().length > 0) && (
+                <button
+                  type="button"
+                  onClick={() => handleResetFilters()}
+                  className="cursor-pointer font-semibold text-emerald-700 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600"
+                >
+                  Filtreyi sıfırla
+                </button>
+              )}
+            </div>
+          </div>
+
+          <div className="no-scrollbar flex flex-nowrap items-center gap-2 overflow-x-auto pb-0.5 md:flex-wrap md:overflow-visible md:pb-0">
             {CATEGORY_FILTERS.map((cat) => {
               const isActive = selectedCategory === cat;
               return (
@@ -329,30 +692,6 @@ export default function App() {
                 </button>
               );
             })}
-          </div>
-
-          <div className="relative w-full min-w-[230px] flex-1 md:max-w-[340px]">
-            <svg
-              width="15"
-              height="15"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2.2"
-              aria-hidden="true"
-              className="pointer-events-none absolute top-1/2 left-[11px] -translate-y-1/2 text-slate-500"
-            >
-              <circle cx="11" cy="11" r="8" />
-              <line x1="21" y1="21" x2="16.65" y2="16.65" />
-            </svg>
-            <input
-              type="search"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="Marka, model veya deneyim ara..."
-              aria-label="Marka, model veya deneyim ara"
-              className="w-full rounded-[10px] border border-slate-200 bg-slate-50 py-[8.5px] pr-3 pl-[34px] text-[13px] text-slate-900 outline-none transition-colors focus:border-emerald-600 focus:bg-white"
-            />
           </div>
         </section>
 

@@ -1,9 +1,15 @@
 import { Category, CategoryFilter, Recommendation } from '../types/recommendation';
 
 export const CATEGORIES: Category[] = [
+  'Yemek & Mekan',
   'Ev Aletleri',
   'Ses & Görüntü',
   'Bilgisayar & Aksesuar',
+  'Temizlik & Ev Bakım',
+  'Kişisel Bakım & Kozmetik',
+  'Mutfak & Gıda',
+  'Oto & Aksesuar',
+  'Anne & Bebek',
 ];
 
 export const CATEGORY_FILTERS: CategoryFilter[] = ['Tümü', ...CATEGORIES];

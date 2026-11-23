@@ -191,6 +191,7 @@ export function subscribePublicRecommendations(
             id: docSnap.id,
             product: String(d.product || ''),
             category: d.category as Category,
+            location: typeof d.location === 'string' && d.location.trim() ? d.location.trim() : undefined,
             duration: String(d.duration || ''),
             note: String(d.note || ''),
             media: Array.isArray(d.media) ? (d.media as MediaItem[]) : [],
@@ -289,6 +290,7 @@ export async function cleanupRemovedRecommendationsIfAuthorized(): Promise<void>
 export interface CreateRecommendationInput {
   product: string;
   category: Category;
+  location?: string;
   duration: string;
   note: string;
   media: MediaItem[];
@@ -301,11 +303,13 @@ export async function createRecommendationInFirestore(
   const recId = `rec-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
   const path = `recommendations/${recId}`;
   const authorName = (user.displayName || user.email?.split('@')[0] || 'Kullanıcı').slice(0, 100);
+  const cleanLocation = input.location?.trim().slice(0, 100);
 
   try {
     await setDoc(doc(db, 'recommendations', recId), {
       product: input.product.slice(0, 180),
       category: input.category,
+      ...(cleanLocation && cleanLocation.length >= 2 ? { location: cleanLocation } : {}),
       duration: input.duration.slice(0, 60),
       note: input.note.slice(0, 2000),
       media: input.media.slice(0, MAX_MEDIA_ITEMS),
