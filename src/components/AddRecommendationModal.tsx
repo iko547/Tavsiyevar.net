@@ -107,7 +107,7 @@ export function AddRecommendationModal({
     ) => {
       const trimmedProd = currentProduct.trim();
       const trimmedNote = currentNote.trim();
-      if (trimmedNote.length < 5 && trimmedProd.length < 2) {
+      if (trimmedNote.length < 3 && trimmedProd.length < 2) {
         if (forceApply) {
           setAiError('Öneri alabilmek için önce ürün/mekan adı veya kısa yorum yazın.');
         }
@@ -138,6 +138,14 @@ export function AddRecommendationModal({
           }),
           signal: controller.signal,
         });
+
+        const contentType = res.headers.get('content-type') || '';
+        if (!contentType.includes('application/json')) {
+          if (forceApply) {
+            setAiError('Otomatik kategori servisi şu anda yanıt vermiyor, listeden seçebilirsiniz.');
+          }
+          return;
+        }
 
         const data = (await res.json().catch(() => ({}))) as {
           category?: unknown;
@@ -196,14 +204,13 @@ export function AddRecommendationModal({
     const trimmedProduct = product.trim();
 
     const enoughForAuto =
-      trimmedNote.length >= 12 ||
-      (trimmedNote.length >= 6 && trimmedProduct.length >= 3);
+      trimmedNote.length >= 6 || trimmedProduct.length >= 4;
 
     if (!enoughForAuto) return;
 
     const timer = window.setTimeout(() => {
       void requestCategorySuggestion(trimmedProduct, trimmedNote, false);
-    }, 850);
+    }, 650);
 
     return () => window.clearTimeout(timer);
   }, [isOpen, note, product, requestCategorySuggestion]);
@@ -540,6 +547,36 @@ export function AddRecommendationModal({
               }
               className="min-h-[92px] w-full resize-y rounded-[11px] border border-slate-200 bg-slate-50 px-3 py-2.5 text-[13.5px] text-slate-900 outline-none transition-colors focus:border-emerald-600 focus:bg-white"
             />
+            {(isAnalyzingCategory || aiSuggestion) && (
+              <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2 text-[11.5px]">
+                {isAnalyzingCategory ? (
+                  <span className="font-medium text-emerald-700">
+                    Yapay zeka uygun kategoriyi analiz ediyor...
+                  </span>
+                ) : aiSuggestion ? (
+                  <span className="font-medium text-slate-600">
+                    Otomatik kategori:{' '}
+                    <strong className="font-bold text-emerald-800">{category}</strong>
+                    {category !== aiSuggestion.category && (
+                      <>
+                        {' · '}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setCategory(aiSuggestion.category);
+                            setHasManualCategory(false);
+                            hasManualCategoryRef.current = false;
+                          }}
+                          className="cursor-pointer font-bold text-emerald-700 underline hover:text-emerald-900"
+                        >
+                          Öneriyi uygula ({aiSuggestion.category})
+                        </button>
+                      </>
+                    )}
+                  </span>
+                ) : null}
+              </div>
+            )}
           </div>
 
           <div>

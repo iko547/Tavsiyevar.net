@@ -62,9 +62,9 @@ async function startServer() {
     const note =
       typeof body.note === 'string' ? body.note.trim().slice(0, 2000) : '';
 
-    if (note.length < 5 && product.length < 2) {
+    if (note.length < 3 && product.length < 2) {
       res.status(400).json({
-        error: 'Kategori tahmini için en az birkaç kelimelik ürün adı veya yorum yazın.',
+        error: 'Kategori tahmini için en az ürün/mekan adı veya birkaç kelimelik yorum yazın.',
       });
       return;
     }
@@ -100,7 +100,7 @@ async function startServer() {
       .filter(Boolean)
       .join('\n');
 
-    const callCategoryModel = async (modelName: 'gemini-4-hydrogen' | 'gemini-3.1-flash-lite') => {
+    const callCategoryModel = async (modelName: 'gemini-3.1-flash-lite' | 'gemini-4-hydrogen') => {
       return ai.models.generateContent({
         model: modelName,
         contents: userPrompt,
@@ -126,26 +126,28 @@ async function startServer() {
       });
     };
 
-    const isTransientError = (err: unknown): boolean => {
+    const isRetryableError = (err: unknown): boolean => {
       const e = err as { status?: number; message?: string };
       const st = typeof e?.status === 'number' ? e.status : 0;
       const msg = typeof e?.message === 'string' ? e.message : '';
-      return st === 500 || st === 502 || st === 503 || st === 504 || msg.includes('UNAVAILABLE');
+      return (
+        st === 429 ||
+        st === 500 ||
+        st === 502 ||
+        st === 503 ||
+        st === 504 ||
+        msg.includes('UNAVAILABLE') ||
+        msg.includes('RESOURCE_EXHAUSTED')
+      );
     };
 
     try {
       let response;
       try {
-        response = await callCategoryModel('gemini-4-hydrogen');
+        response = await callCategoryModel('gemini-3.1-flash-lite');
       } catch (firstErr) {
-        if (!isTransientError(firstErr)) throw firstErr;
-        await new Promise((r) => setTimeout(r, 450));
-        try {
-          response = await callCategoryModel('gemini-4-hydrogen');
-        } catch (secondErr) {
-          if (!isTransientError(secondErr)) throw secondErr;
-          response = await callCategoryModel('gemini-3.1-flash-lite');
-        }
+        if (!isRetryableError(firstErr)) throw firstErr;
+        response = await callCategoryModel('gemini-4-hydrogen');
       }
 
       const rawText = (response.text ?? '')

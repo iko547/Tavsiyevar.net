@@ -542,7 +542,7 @@ export default function App() {
             <span>Fiyat / Performans &amp; Gerçek Deneyim Odaklı</span>
           </div>
           <p className="max-w-[680px] text-[15px] font-medium text-slate-600">
-            Gerçek kullanıcı deneyimlerine dayalı, doğrulanmış fiyat/performans tavsiyeleri.
+            Gerçek kullanıcı deneyimlerine dayalı, doğrulanmış fiyat/performans tavsiyeleri. Üyeliksiz gezebilir ve puan verebilirsiniz.
           </p>
         </section>
 
