@@ -11,11 +11,22 @@ export type Category =
 
 export type CategoryFilter = 'Tümü' | Category;
 
+export type SortOption = 'newest' | 'highest' | 'most_voted';
+
 export interface MediaItem {
   id: string;
   type: 'image' | 'video';
   url: string;
   name: string;
+}
+
+export interface RecommendationComment {
+  id: string;
+  recId: string;
+  text: string;
+  authorId: string;
+  authorName: string;
+  createdAtMs: number;
 }
 
 export interface Recommendation {

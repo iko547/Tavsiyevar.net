@@ -2,11 +2,12 @@ import { onAuthStateChanged, signInWithPopup, signOut, User } from 'firebase/aut
 import { MouseEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AddRecommendationModal } from './components/AddRecommendationModal';
 import { BrandEmblem } from './components/BrandEmblem';
+import { InfoModal, InfoModalTab } from './components/InfoModal';
 import { MediaLightbox } from './components/MediaLightbox';
 import { RecommendationCard } from './components/RecommendationCard';
 import { CATEGORY_FILTERS, INITIAL_RECOMMENDATIONS } from './data/initialRecommendations';
 import { auth, googleProvider } from './firebase';
-import { CategoryFilter, MediaItem, Recommendation } from './types/recommendation';
+import { CategoryFilter, MediaItem, Recommendation, SortOption } from './types/recommendation';
 import {
   cleanupRemovedRecommendationsIfAuthorized,
   CreateRecommendationInput,
@@ -32,10 +33,17 @@ export default function App() {
   const [guestVotes, setGuestVotes] = useState<Record<string, number>>(() => loadGuestVotes());
   const [votingIds, setVotingIds] = useState<Record<string, boolean>>({});
   const [selectedCategory, setSelectedCategory] = useState<CategoryFilter>('Tümü');
+  const [sortBy, setSortBy] = useState<SortOption>('newest');
+  const [focusedRecId, setFocusedRecId] = useState<string | null>(() => {
+    if (typeof window === 'undefined') return null;
+    const param = new URLSearchParams(window.location.search).get('tavsiye');
+    return param && param.trim().length > 0 ? param.trim() : null;
+  });
   const [searchTerm, setSearchTerm] = useState('');
   const [isSearchDropdownOpen, setIsSearchDropdownOpen] = useState(false);
   const [activeSuggestionIndex, setActiveSuggestionIndex] = useState(-1);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [activeInfoTab, setActiveInfoTab] = useState<InfoModalTab | null>(null);
   const [isSigningIn, setIsSigningIn] = useState(false);
   const [lightboxState, setLightboxState] = useState<{
     media: MediaItem;
@@ -251,9 +259,18 @@ export default function App() {
     return list;
   }, [searchSuggestions]);
 
+  const focusedRecommendation = useMemo(() => {
+    if (!focusedRecId) return null;
+    return recommendations.find((item) => item.id === focusedRecId) ?? null;
+  }, [recommendations, focusedRecId]);
+
   const filteredRecommendations = useMemo(() => {
+    if (focusedRecId) {
+      return focusedRecommendation ? [focusedRecommendation] : [];
+    }
+
     const query = normalizeTurkish(searchTerm);
-    return recommendations.filter((item) => {
+    const matched = recommendations.filter((item) => {
       const catOk = selectedCategory === 'Tümü' || item.category === selectedCategory;
       if (!catOk) return false;
       if (!query) return true;
@@ -264,14 +281,59 @@ export default function App() {
         normalizeTurkish(item.category).includes(query)
       );
     });
-  }, [recommendations, selectedCategory, searchTerm]);
 
-  const handleSelectSuggestion = useCallback((value: string) => {
-    setSearchTerm(value);
-    setSelectedCategory('Tümü');
-    setIsSearchDropdownOpen(false);
-    setActiveSuggestionIndex(-1);
+    if (sortBy === 'newest') {
+      return [...matched].sort((a, b) => (b.createdAtMs || 0) - (a.createdAtMs || 0));
+    }
+
+    if (sortBy === 'highest') {
+      return [...matched].sort((a, b) => {
+        const avgA = a.ratingCount > 0 ? a.ratingSum / a.ratingCount : 0;
+        const avgB = b.ratingCount > 0 ? b.ratingSum / b.ratingCount : 0;
+        if (Math.abs(avgB - avgA) > 0.0001) return avgB - avgA;
+        if (b.ratingCount !== a.ratingCount) return b.ratingCount - a.ratingCount;
+        return (b.createdAtMs || 0) - (a.createdAtMs || 0);
+      });
+    }
+
+    return [...matched].sort((a, b) => {
+      if (b.ratingCount !== a.ratingCount) return b.ratingCount - a.ratingCount;
+      const avgA = a.ratingCount > 0 ? a.ratingSum / a.ratingCount : 0;
+      const avgB = b.ratingCount > 0 ? b.ratingSum / b.ratingCount : 0;
+      if (Math.abs(avgB - avgA) > 0.0001) return avgB - avgA;
+      return (b.createdAtMs || 0) - (a.createdAtMs || 0);
+    });
+  }, [
+    focusedRecId,
+    focusedRecommendation,
+    recommendations,
+    selectedCategory,
+    searchTerm,
+    sortBy,
+  ]);
+
+  const clearFocusedUrlParam = useCallback(() => {
+    setFocusedRecId(null);
+    if (typeof window !== 'undefined') {
+      const url = new URL(window.location.href);
+      if (url.searchParams.has('tavsiye')) {
+        url.searchParams.delete('tavsiye');
+        const nextUrl = `${url.pathname}${url.search}${url.hash}`;
+        window.history.replaceState({}, '', nextUrl);
+      }
+    }
   }, []);
+
+  const handleSelectSuggestion = useCallback(
+    (value: string) => {
+      clearFocusedUrlParam();
+      setSearchTerm(value);
+      setSelectedCategory('Tümü');
+      setIsSearchDropdownOpen(false);
+      setActiveSuggestionIndex(-1);
+    },
+    [clearFocusedUrlParam],
+  );
 
   const handleSignIn = useCallback(async (): Promise<User | null> => {
     setIsSigningIn(true);
@@ -301,7 +363,9 @@ export default function App() {
 
   const handleResetFilters = (e?: MouseEvent<HTMLAnchorElement>) => {
     if (e) e.preventDefault();
+    clearFocusedUrlParam();
     setSelectedCategory('Tümü');
+    setSortBy('newest');
     setSearchTerm('');
     setIsSearchDropdownOpen(false);
     setActiveSuggestionIndex(-1);
@@ -328,20 +392,59 @@ export default function App() {
     }
   };
 
+  const handleShareRecommendation = useCallback(
+    async (item: Recommendation) => {
+      const url = new URL(window.location.href);
+      url.search = '';
+      url.hash = '';
+      url.searchParams.set('tavsiye', item.id);
+      const shareUrl = url.toString();
+
+      if (typeof navigator.share === 'function') {
+        try {
+          await navigator.share({
+            title: `${item.product} — tavsiyevar.net`,
+            text: `${item.product}${item.location ? ` (${item.location})` : ''} — ${item.note.slice(0, 100)}`,
+            url: shareUrl,
+          });
+          return;
+        } catch (err) {
+          if ((err as { name?: string })?.name === 'AbortError') {
+            return;
+          }
+        }
+      }
+
+      try {
+        await navigator.clipboard.writeText(shareUrl);
+        showToast('Paylaşım bağlantısı kopyalandı');
+      } catch {
+        showToast('Bağlantı kopyalanamadı, tarayıcı adresini paylaşabilirsiniz');
+      }
+    },
+    [showToast],
+  );
+
   const handleAddRecommendation = async (input: CreateRecommendationInput) => {
     if (!user) return;
     await createRecommendationInFirestore(input, user);
+    clearFocusedUrlParam();
     setSelectedCategory('Tümü');
+    setSortBy('newest');
     setSearchTerm('');
     showToast('Tavsiyen canlı veritabanına kaydedildi');
   };
 
   const handleDeleteRecommendation = async (recId: string) => {
     await deleteRecommendationInFirestore(recId);
+    if (focusedRecId === recId) {
+      clearFocusedUrlParam();
+    }
     showToast('Tavsiye veritabanından silindi');
   };
 
   const closeAddModal = useCallback(() => setIsAddModalOpen(false), []);
+  const closeInfoModal = useCallback(() => setActiveInfoTab(null), []);
   const closeLightbox = useCallback(() => setLightboxState(null), []);
 
   const isCurrentUserAdmin = Boolean(
@@ -349,7 +452,7 @@ export default function App() {
   );
 
   return (
-    <div className="min-h-screen bg-slate-50 font-sans text-slate-900">
+    <div className="flex min-h-screen flex-col bg-slate-50 font-sans text-slate-900">
       {/* Üst Menü Barı */}
       <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/95 backdrop-blur-md">
         <div className="mx-auto flex max-w-[1120px] flex-nowrap items-center justify-between gap-2 px-3 py-2.5 sm:gap-3 sm:px-4 sm:py-3">
@@ -429,7 +532,7 @@ export default function App() {
       </header>
 
       {/* Ana İçerik */}
-      <main id="top" className="mx-auto max-w-[1120px] px-4 pt-5 pb-16">
+      <main id="top" className="mx-auto w-full max-w-[1120px] flex-1 px-4 pt-5 pb-12">
         {/* Alt Başlık ve Fiyat/Performans Rozeti */}
         <section className="mb-[18px] flex flex-col items-start gap-2.5 rounded-2xl border border-slate-200 bg-white px-5 py-[18px] shadow-[0_1px_2px_rgba(15,23,42,0.04),0_1px_3px_rgba(15,23,42,0.06)]">
           <div className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-[12.5px] font-bold text-emerald-700">
@@ -659,13 +762,32 @@ export default function App() {
               )}
             </div>
 
-            <div className="flex items-center gap-3 text-xs font-semibold text-slate-500 tabular-nums">
-              <span>{filteredRecommendations.length} tavsiye</span>
-              {(selectedCategory !== 'Tümü' || searchTerm.trim().length > 0) && (
+            <div className="flex flex-wrap items-center gap-2.5 text-xs font-semibold text-slate-500 tabular-nums">
+              <div className="flex items-center gap-1.5">
+                <label htmlFor="sortSelect" className="text-[11.5px] font-semibold text-slate-500">
+                  Sırala:
+                </label>
+                <select
+                  id="sortSelect"
+                  aria-label="Sıralama ölçütü"
+                  value={sortBy}
+                  onChange={(e) => {
+                    clearFocusedUrlParam();
+                    setSortBy(e.target.value as SortOption);
+                  }}
+                  className="cursor-pointer rounded-[9px] border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs font-semibold text-slate-700 outline-none transition-colors hover:border-slate-300 focus:border-emerald-600 focus:bg-white"
+                >
+                  <option value="newest">En Yeniler</option>
+                  <option value="highest">En Yüksek Puan</option>
+                  <option value="most_voted">En Çok Oylanan</option>
+                </select>
+              </div>
+              <span className="whitespace-nowrap">{filteredRecommendations.length} tavsiye</span>
+              {(selectedCategory !== 'Tümü' || searchTerm.trim().length > 0 || focusedRecId) && (
                 <button
                   type="button"
                   onClick={() => handleResetFilters()}
-                  className="cursor-pointer font-semibold text-emerald-700 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600"
+                  className="cursor-pointer whitespace-nowrap font-semibold text-emerald-700 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600"
                 >
                   Filtreyi sıfırla
                 </button>
@@ -675,12 +797,15 @@ export default function App() {
 
           <div className="no-scrollbar flex flex-nowrap items-center gap-2 overflow-x-auto pb-0.5 md:flex-wrap md:overflow-visible md:pb-0">
             {CATEGORY_FILTERS.map((cat) => {
-              const isActive = selectedCategory === cat;
+              const isActive = !focusedRecId && selectedCategory === cat;
               return (
                 <button
                   key={cat}
                   type="button"
-                  onClick={() => setSelectedCategory(cat)}
+                  onClick={() => {
+                    clearFocusedUrlParam();
+                    setSelectedCategory(cat);
+                  }}
                   aria-pressed={isActive}
                   className={`shrink-0 cursor-pointer whitespace-nowrap rounded-[10px] border px-[13px] py-[7px] text-[12.5px] font-semibold transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600 ${
                     isActive
@@ -694,6 +819,24 @@ export default function App() {
             })}
           </div>
         </section>
+
+        {/* Paylaşılan Tekil Tavsiye Başlığı (?tavsiye=...) */}
+        {focusedRecId && !isLoadingItems && (
+          <section className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-emerald-200 bg-emerald-50/80 px-4 py-3">
+            <p className="text-[13px] font-semibold text-emerald-900">
+              {focusedRecommendation
+                ? 'Paylaşılan tavsiye bağlantısı görüntüleniyor.'
+                : 'Paylaşılan tavsiye bulunamadı veya kaldırılmış olabilir.'}
+            </p>
+            <button
+              type="button"
+              onClick={clearFocusedUrlParam}
+              className="cursor-pointer whitespace-nowrap rounded-[10px] border border-emerald-300 bg-white px-3 py-1.5 text-xs font-bold text-emerald-800 shadow-xs transition-colors hover:bg-emerald-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600"
+            >
+              Tüm Tavsiyeleri Gör
+            </button>
+          </section>
+        )}
 
         {/* Tavsiye Kartları Izgarası */}
         {isLoadingItems ? (
@@ -717,13 +860,19 @@ export default function App() {
                 <RecommendationCard
                   key={item.id}
                   item={item}
+                  currentUser={user}
+                  isAdmin={isCurrentUserAdmin}
                   canDelete={canDelete}
                   isVoting={Boolean(votingIds[item.id])}
+                  isHighlighted={focusedRecId === item.id}
                   onVote={handleVote}
                   onDelete={handleDeleteRecommendation}
                   onOpenMedia={(media, productTitle) =>
                     setLightboxState({ media, productTitle })
                   }
+                  onSignIn={handleSignIn}
+                  onShare={handleShareRecommendation}
+                  onNotify={showToast}
                 />
               );
             })}
@@ -731,10 +880,14 @@ export default function App() {
         ) : (
           <section className="rounded-2xl border border-slate-200 bg-white px-5 py-9 text-center shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
             <h3 className="mb-1.5 text-base font-bold text-slate-900">
-              Aradığın kriterde tavsiye bulunamadı
+              {focusedRecId
+                ? 'Paylaşılan tavsiye görüntülenemedi'
+                : 'Aradığın kriterde tavsiye bulunamadı'}
             </h3>
             <p className="mb-3.5 text-[13.5px] text-slate-500">
-              Farklı bir marka veya model yazabilir ya da tüm kategorileri görüntüleyebilirsin.
+              {focusedRecId
+                ? 'Bu tavsiye kaldırılmış olabilir. Diğer topluluk tavsiyelerine göz atabilirsin.'
+                : 'Farklı bir marka veya model yazabilir ya da tüm kategorileri görüntüleyebilirsin.'}
             </p>
             <button
               type="button"
@@ -747,6 +900,48 @@ export default function App() {
         )}
       </main>
 
+      {/* Alt Bilgi (Footer) */}
+      <footer className="border-t border-slate-200 bg-white">
+        <div className="mx-auto flex max-w-[1120px] flex-wrap items-center justify-between gap-3 px-4 py-5 text-xs text-slate-500">
+          <div className="flex items-center gap-2">
+            <BrandEmblem lit size={16} />
+            <span className="font-semibold text-slate-700">tavsiyevar.net</span>
+            <span>&copy; 2026</span>
+          </div>
+
+          <nav aria-label="Bilgi ve yasal bağlantılar" className="flex flex-wrap items-center gap-4">
+            <button
+              type="button"
+              onClick={() => setActiveInfoTab('about')}
+              className="cursor-pointer font-medium text-slate-600 transition-colors hover:text-emerald-700"
+            >
+              Hakkında
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveInfoTab('terms')}
+              className="cursor-pointer font-medium text-slate-600 transition-colors hover:text-emerald-700"
+            >
+              Kullanım Koşulları
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveInfoTab('privacy')}
+              className="cursor-pointer font-medium text-slate-600 transition-colors hover:text-emerald-700"
+            >
+              Gizlilik
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveInfoTab('contact')}
+              className="cursor-pointer font-medium text-slate-600 transition-colors hover:text-emerald-700"
+            >
+              İletişim
+            </button>
+          </nav>
+        </div>
+      </footer>
+
       {/* Yeni Tavsiye Ekle Modalı */}
       <AddRecommendationModal
         isOpen={isAddModalOpen}
@@ -755,6 +950,13 @@ export default function App() {
         onClose={closeAddModal}
         onAdd={handleAddRecommendation}
         onNotify={showToast}
+      />
+
+      {/* Bilgi & Yasal Sayfalar Modalı */}
+      <InfoModal
+        activeTab={activeInfoTab}
+        onClose={closeInfoModal}
+        onChangeTab={setActiveInfoTab}
       />
 
       {/* Medya Büyütme (Lightbox) Penceresi */}

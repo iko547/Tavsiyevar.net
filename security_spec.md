@@ -7,6 +7,7 @@
    - Author/Admin edit: may only modify `['product', 'category', 'duration', 'note', 'media', 'updatedAt']`.
    - Community vote: may only modify `['ratingSum', 'ratingCount', 'updatedAt']` within strict single-vote delta bounds (`ratingCount` +0 or +1, `ratingSum` delta in `[-4, +5]`) AND must atomically write `/users/{request.auth.uid}/votes/{recId}` with matching `request.time`.
 4. `/users/{userId}/votes/{recId}` is strictly isolated to `userId == request.auth.uid` for read, list, create, update, and delete.
+5. `/recommendations/{recId}/comments/{commentId}` requires `isPublic == true`, valid parent recommendation existence (`exists` & `isPublic == true`), verified Google Auth (`email_verified == true`), `authorId == request.auth.uid`, bounded `text` (3..600 chars), and `createdAt == request.time`. Only author or admin may delete.
 
 ## Dirty Dozen Adversarial Payloads (Must Return PERMISSION_DENIED)
 1. Unauthenticated recommendation creation (`request.auth == null`).
@@ -20,4 +21,6 @@
 9. Rating manipulation without vote doc: incrementing `ratingSum` by `+500` directly on `/recommendations/{recId}` without atomic `/users/{uid}/votes/{recId}` write.
 10. Cross-user vote tampering: writing `/users/{victimUid}/votes/{recId}` while signed in as attacker.
 11. Out-of-bounds vote score: `score: 99` or `score: 0` in `/users/{uid}/votes/{recId}`.
-12. Deleting another user's recommendation as a non-admin user.
+12. Deleting another user's recommendation or comment as a non-admin user.
+13. Orphaned comment creation under a non-existent `/recommendations/{fakeRecId}/comments/{commentId}`.
+14. Unauthenticated or oversized (> 600 chars) comment creation.

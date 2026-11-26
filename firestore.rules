@@ -75,7 +75,7 @@ service cloud.firestore {
           'Anne & Bebek'
         ]
         && (!('location' in data) || (data.location is string && data.location.size() >= 2 && data.location.size() <= 100))
-        && data.duration is string && data.duration.size() >= 2 && data.duration.size() <= 60
+        && data.duration is string && data.duration.size() >= 1 && data.duration.size() <= 60
         && data.note is string && data.note.size() >= 5 && data.note.size() <= 2000
         && isValidMediaList(data.media)
         && data.authorId is string && data.authorId.size() >= 1 && data.authorId.size() <= 128
@@ -94,6 +94,17 @@ service cloud.firestore {
         && data.recId is string && data.recId == recId
         && data.score is int && data.score >= 1 && data.score <= 5
         && data.updatedAt is timestamp;
+    }
+
+    function isValidComment(data, recId) {
+      return data.keys().hasAll(['recId', 'text', 'authorId', 'authorName', 'isPublic', 'createdAt'])
+        && data.keys().hasOnly(['recId', 'text', 'authorId', 'authorName', 'isPublic', 'createdAt'])
+        && data.recId is string && data.recId == recId
+        && data.text is string && data.text.size() >= 3 && data.text.size() <= 600
+        && data.authorId is string && data.authorId.size() >= 1 && data.authorId.size() <= 128
+        && data.authorName is string && data.authorName.size() >= 1 && data.authorName.size() <= 100
+        && data.isPublic is bool && data.isPublic == true
+        && data.createdAt is timestamp;
     }
 
     match /recommendations/{recId} {
@@ -149,6 +160,25 @@ service cloud.firestore {
       allow delete: if isVerified()
         && isValidId(recId)
         && (existing().authorId == request.auth.uid || isAdmin());
+
+      match /comments/{commentId} {
+        allow get: if isValidId(recId) && isValidId(commentId) && existing().isPublic == true;
+        allow list: if resource.data.isPublic == true;
+
+        allow create: if isVerified()
+          && isValidId(recId)
+          && isValidId(commentId)
+          && isValidComment(incoming(), recId)
+          && incoming().authorId == request.auth.uid
+          && incoming().createdAt == request.time
+          && exists(/databases/$(database)/documents/recommendations/$(recId))
+          && get(/databases/$(database)/documents/recommendations/$(recId)).data.isPublic == true;
+
+        allow delete: if isVerified()
+          && isValidId(recId)
+          && isValidId(commentId)
+          && (existing().authorId == request.auth.uid || isAdmin());
+      }
     }
 
     match /users/{userId}/votes/{recId} {

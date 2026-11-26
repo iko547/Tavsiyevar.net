@@ -16,7 +16,7 @@ import {
 } from 'firebase/firestore';
 import { INITIAL_RECOMMENDATIONS } from '../data/initialRecommendations';
 import { db, handleFirestoreError, OperationType } from '../firebase';
-import { Category, MediaItem, Recommendation } from '../types/recommendation';
+import { Category, MediaItem, Recommendation, RecommendationComment } from '../types/recommendation';
 
 export const MAX_MEDIA_ITEMS = 3;
 const MAX_MEDIA_DATAURL_CHARS = 280000;
@@ -391,6 +391,77 @@ export async function deleteRecommendationInFirestore(recId: string): Promise<vo
   const path = `recommendations/${recId}`;
   try {
     await deleteDoc(doc(db, 'recommendations', recId));
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, path);
+  }
+}
+
+export function subscribeRecommendationComments(
+  recId: string,
+  onData: (comments: RecommendationComment[]) => void,
+  onError: (err: Error) => void,
+): () => void {
+  const path = `recommendations/${recId}/comments`;
+  const q = query(collection(db, 'recommendations', recId, 'comments'), where('isPublic', '==', true));
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      const comments: RecommendationComment[] = snapshot.docs.map((docSnap) => {
+        const d = docSnap.data();
+        return {
+          id: docSnap.id,
+          recId,
+          text: String(d.text || ''),
+          authorId: String(d.authorId || ''),
+          authorName: String(d.authorName || 'Kullanıcı'),
+          createdAtMs: toMillis(d.createdAt),
+        };
+      });
+      comments.sort((a, b) => (b.createdAtMs || 0) - (a.createdAtMs || 0));
+      onData(comments);
+    },
+    (error) => {
+      try {
+        handleFirestoreError(error, OperationType.LIST, path);
+      } catch (wrapped) {
+        onError(wrapped instanceof Error ? wrapped : new Error(String(wrapped)));
+      }
+    },
+  );
+}
+
+export async function createCommentInFirestore(
+  recId: string,
+  text: string,
+  user: User,
+): Promise<string> {
+  const commentId = `cmt-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+  const path = `recommendations/${recId}/comments/${commentId}`;
+  const authorName = (user.displayName || user.email?.split('@')[0] || 'Kullanıcı').slice(0, 100);
+  const cleanText = text.trim().slice(0, 600);
+
+  try {
+    await setDoc(doc(db, 'recommendations', recId, 'comments', commentId), {
+      recId,
+      text: cleanText,
+      authorId: user.uid,
+      authorName,
+      isPublic: true,
+      createdAt: serverTimestamp(),
+    });
+    return commentId;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.CREATE, path);
+  }
+}
+
+export async function deleteCommentInFirestore(
+  recId: string,
+  commentId: string,
+): Promise<void> {
+  const path = `recommendations/${recId}/comments/${commentId}`;
+  try {
+    await deleteDoc(doc(db, 'recommendations', recId, 'comments', commentId));
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, path);
   }

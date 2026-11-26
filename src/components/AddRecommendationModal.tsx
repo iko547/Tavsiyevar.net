@@ -1,5 +1,5 @@
 import { User } from 'firebase/auth';
-import { ChangeEvent, FormEvent, useEffect, useRef, useState } from 'react';
+import { ChangeEvent, FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { CATEGORIES } from '../data/initialRecommendations';
 import { Category, MediaItem } from '../types/recommendation';
 import { CreateRecommendationInput, fileToMediaItem, MAX_MEDIA_ITEMS } from '../utils/storage';
@@ -12,6 +12,11 @@ interface AddRecommendationModalProps {
   onClose: () => void;
   onAdd: (input: CreateRecommendationInput) => Promise<void>;
   onNotify: (message: string) => void;
+}
+
+interface CategorySuggestion {
+  category: Category;
+  reason: string;
 }
 
 export function AddRecommendationModal({
@@ -32,22 +37,42 @@ export function AddRecommendationModal({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSigningIn, setIsSigningIn] = useState(false);
 
-  const categorySelectRef = useRef<HTMLSelectElement>(null);
+  const [hasManualCategory, setHasManualCategory] = useState(false);
+  const [isAnalyzingCategory, setIsAnalyzingCategory] = useState(false);
+  const [aiSuggestion, setAiSuggestion] = useState<CategorySuggestion | null>(null);
+  const [aiError, setAiError] = useState<string | null>(null);
 
-  const resetFormState = () => {
+  const categorySelectRef = useRef<HTMLSelectElement>(null);
+  const hasManualCategoryRef = useRef(false);
+  const lastAnalyzedKeyRef = useRef('');
+  const abortControllerRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    hasManualCategoryRef.current = hasManualCategory;
+  }, [hasManualCategory]);
+
+  const resetFormState = useCallback(() => {
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
+    lastAnalyzedKeyRef.current = '';
+    hasManualCategoryRef.current = false;
     setProduct('');
     setCategory('Ev Aletleri');
     setLocation('');
     setDuration('');
     setNote('');
     setStagedMedia([]);
-  };
+    setHasManualCategory(false);
+    setIsAnalyzingCategory(false);
+    setAiSuggestion(null);
+    setAiError(null);
+  }, []);
 
-  const handleCancel = () => {
+  const handleCancel = useCallback(() => {
     if (isSubmitting) return;
     resetFormState();
     onClose();
-  };
+  }, [isSubmitting, onClose, resetFormState]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -72,7 +97,122 @@ export function AddRecommendationModal({
       window.removeEventListener('keydown', handleKeyDown);
       document.body.style.overflow = prevOverflow;
     };
-  }, [isOpen, isSubmitting, onClose]);
+  }, [isOpen, isSubmitting, onClose, resetFormState]);
+
+  const requestCategorySuggestion = useCallback(
+    async (
+      currentProduct: string,
+      currentNote: string,
+      forceApply: boolean,
+    ) => {
+      const trimmedProd = currentProduct.trim();
+      const trimmedNote = currentNote.trim();
+      if (trimmedNote.length < 5 && trimmedProd.length < 2) {
+        if (forceApply) {
+          setAiError('Öneri alabilmek için önce ürün/mekan adı veya kısa yorum yazın.');
+        }
+        return;
+      }
+
+      const key = `${trimmedProd}::${trimmedNote}`;
+      if (!forceApply && key === lastAnalyzedKeyRef.current) {
+        return;
+      }
+
+      abortControllerRef.current?.abort();
+      const controller = new AbortController();
+      abortControllerRef.current = controller;
+
+      setIsAnalyzingCategory(true);
+      if (forceApply) {
+        setAiError(null);
+      }
+
+      try {
+        const res = await fetch('/api/suggest-category', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            product: trimmedProd,
+            note: trimmedNote,
+          }),
+          signal: controller.signal,
+        });
+
+        const data = (await res.json().catch(() => ({}))) as {
+          category?: unknown;
+          reason?: unknown;
+          error?: unknown;
+        };
+
+        if (!res.ok) {
+          const msg =
+            typeof data.error === 'string' && data.error.trim().length > 0
+              ? data.error.trim()
+              : 'Kategori analizi şu anda yapılamadı.';
+          setAiError(msg);
+          return;
+        }
+
+        const matchedCategory = CATEGORIES.find((c) => c === data.category);
+        if (!matchedCategory) {
+          setAiError('Uygun kategori önerisi alınamadı.');
+          return;
+        }
+
+        lastAnalyzedKeyRef.current = key;
+        const reasonText =
+          typeof data.reason === 'string' && data.reason.trim().length > 0
+            ? data.reason.trim()
+            : 'Yorumuna göre önerildi';
+
+        setAiError(null);
+        setAiSuggestion({ category: matchedCategory, reason: reasonText });
+
+        if (forceApply || !hasManualCategoryRef.current) {
+          setCategory(matchedCategory);
+          if (forceApply) {
+            setHasManualCategory(false);
+            hasManualCategoryRef.current = false;
+          }
+        }
+      } catch (err) {
+        if ((err as { name?: string })?.name === 'AbortError') return;
+        if (forceApply) {
+          setAiError('Kategori analiz servisine ulaşılamadı, listeden seçebilirsiniz.');
+        }
+      } finally {
+        if (abortControllerRef.current === controller) {
+          setIsAnalyzingCategory(false);
+        }
+      }
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const trimmedNote = note.trim();
+    const trimmedProduct = product.trim();
+
+    const enoughForAuto =
+      trimmedNote.length >= 12 ||
+      (trimmedNote.length >= 6 && trimmedProduct.length >= 3);
+
+    if (!enoughForAuto) return;
+
+    const timer = window.setTimeout(() => {
+      void requestCategorySuggestion(trimmedProduct, trimmedNote, false);
+    }, 850);
+
+    return () => window.clearTimeout(timer);
+  }, [isOpen, note, product, requestCategorySuggestion]);
+
+  useEffect(() => {
+    return () => {
+      abortControllerRef.current?.abort();
+    };
+  }, []);
 
   const handleMediaUpload = async (e: ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
@@ -138,7 +278,7 @@ export function AddRecommendationModal({
     const trimmedNote = note.trim();
     const isVenue = category === 'Yemek & Mekan';
 
-    if (trimmedProduct.length < 2 || trimmedDuration.length < 2 || trimmedNote.length < 5) {
+    if (trimmedProduct.length < 2 || trimmedDuration.length < 1 || trimmedNote.length < 5) {
       onNotify('Lütfen isim, süre ve en az 5 karakter deneyim notu girin');
       return;
     }
@@ -234,14 +374,43 @@ export function AddRecommendationModal({
           )}
 
           <div>
-            <label htmlFor="inputCategory" className="mb-1.5 block text-[12.5px] font-semibold text-slate-900">
-              Kategori *
-            </label>
+            <div className="mb-1.5 flex items-center justify-between gap-2">
+              <label htmlFor="inputCategory" className="text-[12.5px] font-semibold text-slate-900">
+                Kategori *
+              </label>
+              <button
+                type="button"
+                disabled={isAnalyzingCategory}
+                onClick={() => void requestCategorySuggestion(product, note, true)}
+                className="inline-flex cursor-pointer items-center gap-1 whitespace-nowrap rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11.5px] font-bold text-emerald-800 transition-colors hover:bg-emerald-100 disabled:cursor-wait disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600"
+              >
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                  className="shrink-0"
+                >
+                  <path d="M12 3l1.9 5.8L20 10.7l-5 3.8 1.9 6L12 17l-4.9 3.5 1.9-6-5-3.8 6.1-1.9L12 3z" />
+                </svg>
+                <span>{isAnalyzingCategory ? 'Analiz ediliyor...' : 'Yorumdan Otomatik Öner'}</span>
+              </button>
+            </div>
+
             <select
               ref={categorySelectRef}
               id="inputCategory"
               value={category}
-              onChange={(e) => setCategory(e.target.value as Category)}
+              onChange={(e) => {
+                setCategory(e.target.value as Category);
+                setHasManualCategory(true);
+                hasManualCategoryRef.current = true;
+              }}
               className="w-full rounded-[11px] border border-slate-200 bg-slate-50 px-3 py-2.5 text-[13.5px] text-slate-900 outline-none transition-colors focus:border-emerald-600 focus:bg-white"
             >
               {CATEGORIES.map((cat) => (
@@ -250,6 +419,48 @@ export function AddRecommendationModal({
                 </option>
               ))}
             </select>
+
+            {isAnalyzingCategory && (
+              <p className="mt-1.5 text-[11.5px] font-medium text-emerald-700" role="status">
+                Yapay zeka yorumunu analiz edip en uygun kategoriyi arıyor...
+              </p>
+            )}
+
+            {!isAnalyzingCategory && aiSuggestion && (
+              <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-emerald-200 bg-emerald-50/70 px-2.5 py-1.5 text-[11.5px]">
+                {category === aiSuggestion.category ? (
+                  <span className="font-medium text-emerald-900">
+                    Yapay zeka önerisi seçildi:{' '}
+                    <strong className="font-bold">{aiSuggestion.category}</strong>{' '}
+                    <span className="text-emerald-700">({aiSuggestion.reason})</span> — İstersen
+                    listeden değiştirebilirsin.
+                  </span>
+                ) : (
+                  <>
+                    <span className="font-medium text-slate-700">
+                      Yapay zeka önerisi:{' '}
+                      <strong className="font-bold text-slate-900">{aiSuggestion.category}</strong>{' '}
+                      <span className="text-slate-500">({aiSuggestion.reason})</span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCategory(aiSuggestion.category);
+                        setHasManualCategory(false);
+                        hasManualCategoryRef.current = false;
+                      }}
+                      className="cursor-pointer whitespace-nowrap rounded-md border border-emerald-300 bg-white px-2 py-0.5 text-[11px] font-bold text-emerald-800 hover:bg-emerald-100"
+                    >
+                      Öneriyi Uygula
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
+
+            {!isAnalyzingCategory && aiError && (
+              <p className="mt-1.5 text-[11.5px] font-medium text-amber-800">{aiError}</p>
+            )}
           </div>
 
           <div>
@@ -302,7 +513,7 @@ export function AddRecommendationModal({
                 id="inputDuration"
                 value={duration}
                 onChange={(e) => setDuration(e.target.value)}
-                minLength={2}
+                minLength={1}
                 maxLength={60}
                 required
                 placeholder={category === 'Yemek & Mekan' ? 'Örn: 2 yıldır müdavimiyim' : 'Örn: 6 ay'}
@@ -324,8 +535,8 @@ export function AddRecommendationModal({
               required
               placeholder={
                 category === 'Yemek & Mekan'
-                  ? 'Lezzet, porsiyon, hijyen ve fiyat/performans deneyimini paylaş...'
-                  : 'Ürünün günlük kullanımdaki gerçek performansını ve fiyat/performans deneyimini paylaş...'
+                  ? 'Lezzet, porsiyon, hijyen ve fiyat/performans deneyimini paylaş... (Yazdıkça kategori otomatik önerilir)'
+                  : 'Ürünün günlük kullanımdaki gerçek performansını ve fiyat/performans deneyimini paylaş... (Yazdıkça kategori otomatik önerilir)'
               }
               className="min-h-[92px] w-full resize-y rounded-[11px] border border-slate-200 bg-slate-50 px-3 py-2.5 text-[13.5px] text-slate-900 outline-none transition-colors focus:border-emerald-600 focus:bg-white"
             />
@@ -426,3 +637,4 @@ export function AddRecommendationModal({
     </div>
   );
 }
+

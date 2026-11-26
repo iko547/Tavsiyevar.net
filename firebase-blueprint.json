@@ -34,7 +34,7 @@
         },
         "duration": {
           "type": "string",
-          "minLength": 2,
+          "minLength": 1,
           "maxLength": 60,
           "description": "Usage duration reported by author"
         },
@@ -126,12 +126,57 @@
         }
       },
       "required": ["userId", "recId", "score", "updatedAt"]
+    },
+    "RecommendationComment": {
+      "title": "RecommendationComment",
+      "description": "A short community follow-up experience or comment on a recommendation.",
+      "type": "object",
+      "properties": {
+        "recId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "Parent recommendation document ID"
+        },
+        "text": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 600,
+          "description": "User comment or follow-up experience text"
+        },
+        "authorId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "Firebase Auth UID of the comment author"
+        },
+        "authorName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "description": "Public non-PII display name of the comment author"
+        },
+        "isPublic": {
+          "type": "boolean",
+          "description": "Public visibility flag"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp"
+        }
+      },
+      "required": ["recId", "text", "authorId", "authorName", "isPublic", "createdAt"]
     }
   },
   "firestore": {
     "/recommendations/{recId}": {
       "schema": { "$ref": "#/entities/Recommendation" },
-      "description": "Public collection of price/performance product recommendations"
+      "description": "Public collection of price/performance product and venue recommendations"
+    },
+    "/recommendations/{recId}/comments/{commentId}": {
+      "schema": { "$ref": "#/entities/RecommendationComment" },
+      "description": "Public subcollection of short follow-up experiences and comments on a recommendation"
     },
     "/users/{userId}/votes/{recId}": {
       "schema": { "$ref": "#/entities/UserVote" },
